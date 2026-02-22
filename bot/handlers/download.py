@@ -8,14 +8,17 @@ Download / retrieval handlers:
   /rename <id>    — rename a file
   /delete <id>    — delete a file record
   /mystats        — show quota usage
-  /settoken       — set your download verification token
-  /verify         — verify token to enable downloads
+
+
 
 Callback handlers for the inline keyboards.
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+import random
+import string
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -25,14 +28,15 @@ from bot.config import settings
 from bot.database.connection import get_db
 from bot.database.repositories.file_repo import FileRepository
 from bot.database.repositories.quota_repo import QuotaRepository
-from bot.utils.file_utils import format_size, parse_tags
+from bot.utils.file_utils import format_size, parse_tags, get_shortlink, get_exp_time
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from bot.utils.keyboards import (
     build_delete_confirm_keyboard,
     build_expiry_keyboard,
     build_file_action_keyboard,
     build_file_list_keyboard,
 )
-from bot.utils.states import RenameStates, TagStates, TokenStates
+from bot.utils.states import RenameStates, TagStates  # TokenStates no longer needed for shortlink verification
 
 logger = logging.getLogger(__name__)
 router = Router(name="download")
@@ -92,14 +96,20 @@ async def _deliver_file(
         return f"🚫 Download not allowed: {reason}"
 
     try:
-        await bot.copy_message(
+        sent_message = await bot.copy_message(
             chat_id=chat_id,
             from_chat_id=record.channel_id,
             message_id=record.internal_message_id,
             caption=record.caption,
+            protect_content=True,  # Prevents forwarding and saving
         )
         # Track download usage (for both admins and regular users)
         await quota_repo.add_download_usage(requesting_user_id, file_size)
+        
+        # Auto-delete the message after 60 seconds
+        asyncio.create_task(
+            _auto_delete_message(bot, chat_id, sent_message.message_id, record_id)
+        )
     except Exception as exc:
         logger.exception("Delivery failed for record %s: %s", record_id, exc)
         return f"❌ Retrieval failed: <code>{type(exc).__name__}</code>"
@@ -107,29 +117,74 @@ async def _deliver_file(
     return None  # success
 
 
+async def _auto_delete_message(
+    bot: Bot,
+    chat_id: int,
+    message_id: int,
+    record_id: str,
+    delay_seconds: int = 60,
+) -> None:
+    """
+    Automatically delete a retrieved file message after a delay.
+    This prevents the file from persisting in the user's chat.
+    """
+    try:
+        await asyncio.sleep(delay_seconds)
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info("Auto-deleted file message for record %s in chat %s", record_id, chat_id)
+    except Exception as exc:
+        logger.warning("Failed to auto-delete message %s in chat %s: %s", message_id, chat_id, exc)
+
+
 @router.message(Command("get"))
 async def cmd_get_file(message: Message, bot: Bot) -> None:
     user_id = message.from_user.id
-
+    quota_repo = QuotaRepository(get_db())
+    if not message.text:
+        return
+    args = message.text.split(maxsplit=1)
+    # Shortlink-based token verification for non-admins
     if not is_admin(user_id):
-        quota_repo = QuotaRepository(get_db())
-        if not await quota_repo.is_token_verified(user_id):
-            stored_token = await quota_repo.get_download_token(user_id)
-            if not stored_token:
-                await message.answer(
-                    "🔐 <b>Token required for downloads.</b>\n\n"
-                    "Use /settoken to set your download token first.",
-                    parse_mode="HTML",
-                )
-                return
+        verify_status = await quota_repo.get_verify_status(user_id)
+        
+        # Check if verification expired
+        if verify_status.get("verified_time"):
+            from datetime import timedelta
+            verified_time = verify_status["verified_time"]
+            if verified_time.tzinfo is None:
+                verified_time = verified_time.replace(tzinfo=timezone.utc)
+            
+            time_diff = (datetime.now(timezone.utc) - verified_time).total_seconds()
+            if time_diff > settings.verify_expire_seconds:
+                # Expired - generate new token and shortlink
+                await quota_repo.update_verify_status(user_id, is_verified=False)
+                verify_status = await quota_repo.get_verify_status(user_id)
+        
+        # Generate verification message if not verified
+        if not verify_status.get("is_verified"):
+            # Generate random 10-character token
+            token = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+            await quota_repo.update_verify_status(user_id, verify_token=token)
+            
+            # Create shortlink
+            bot_username = await bot.get_me()
+            shortlink = await get_shortlink(
+                settings.shortlink_url,
+                settings.shortlink_api,
+                f"https://t.me/{bot_username.username}?start=verify_{token}"
+            )
+            
+            # Create button
+            btn = [[InlineKeyboardButton(text="• 🔗 Open Link •", url=shortlink)]]
             await message.answer(
-                "🔐 <b>Token verification required.</b>\n\n"
-                "Use /verify to verify your token before downloading.",
+                f"<b>Your token has expired...</b> Please refresh your token to continue..\n\n"
+                f"<b>Token Timeout:</b> {get_exp_time(settings.verify_expire_seconds)}\n\n"
+                f"<b>What is the token?</b>\n\n"
+                f"This is an ads token. Passing one ad allows you to use the bot for {get_exp_time(settings.verify_expire_seconds)}",
                 parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=btn)
             )
             return
-
-    args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.answer("Usage: /get <code>&lt;file_id&gt;</code>", parse_mode="HTML")
         return
@@ -176,6 +231,8 @@ async def _send_file_list(target: Message | CallbackQuery, page: int) -> None:
 
 @router.message(Command("list"))
 async def cmd_list_files(message: Message) -> None:
+    if not message.text:
+        return
     args = message.text.split(maxsplit=1)
     try:
         page = int(args[1]) if len(args) > 1 else 1
@@ -203,15 +260,52 @@ async def cb_noop(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("get:"))
 async def cb_get_file(callback: CallbackQuery, bot: Bot) -> None:
     user_id = callback.from_user.id
+    quota_repo = QuotaRepository(get_db())
 
+    # Shortlink-based token verification for non-admins
     if not is_admin(user_id):
-        quota_repo = QuotaRepository(get_db())
-        if not await quota_repo.is_token_verified(user_id):
-            stored_token = await quota_repo.get_download_token(user_id)
-            if not stored_token:
-                await callback.answer("🔐 Set a token with /settoken first.", show_alert=True)
-                return
-            await callback.answer("🔐 Verify your token with /verify first.", show_alert=True)
+        verify_status = await quota_repo.get_verify_status(user_id)
+        
+        # Check if verification expired
+        if verify_status.get("verified_time"):
+            from datetime import timedelta
+            verified_time = verify_status["verified_time"]
+            if verified_time.tzinfo is None:
+                verified_time = verified_time.replace(tzinfo=timezone.utc)
+            
+            time_diff = (datetime.now(timezone.utc) - verified_time).total_seconds()
+            if time_diff > settings.verify_expire_seconds:
+                # Expired - generate new token and shortlink
+                await quota_repo.update_verify_status(user_id, is_verified=False)
+                verify_status = await quota_repo.get_verify_status(user_id)
+        
+        # Generate verification message if not verified
+        if not verify_status.get("is_verified"):
+            # Generate random 10-character token
+            import random
+            import string
+            token = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+            await quota_repo.update_verify_status(user_id, verify_token=token)
+            
+            # Create shortlink
+            bot_username = await bot.get_me()
+            shortlink = await get_shortlink(
+                settings.shortlink_url,
+                settings.shortlink_api,
+                f"https://t.me/{bot_username.username}?start=verify_{token}"
+            )
+            
+            # Create button
+            btn = [[InlineKeyboardButton(text="• 🔗 Open Link •", url=shortlink)]]
+            await callback.message.answer(
+                f"<b>Your token has expired...</b> Please refresh your token to continue..\n\n"
+                f"<b>Token Timeout:</b> {get_exp_time(settings.verify_expire_seconds)}\n\n"
+                f"<b>What is the token?</b>\n\n"
+                f"This is an ads token. Passing one ad allows you to use the bot for {get_exp_time(settings.verify_expire_seconds)}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=btn)
+            )
+            await callback.answer()
             return
 
     record_id = callback.data.split(":", 1)[1]
@@ -332,7 +426,66 @@ async def cmd_claim(message: Message, bot: Bot) -> None:
     Claim a shared file using its share code.
     The bot copies the file from the internal channel to the claimer.
     """
+    if not message.text:
+        return
     args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Usage: /claim <code>&lt;share_code&gt;</code>", parse_mode="HTML")
+        return
+
+    code = args[1].strip().upper()
+    repo = FileRepository(get_db())
+    quota_repo = QuotaRepository(get_db())
+    record = await repo.get_by_share_code(code)
+
+    if not record:
+        await message.answer("❌ Invalid or expired share code.")
+        return
+
+    user_id = message.from_user.id
+    
+    # Shortlink-based token verification for non-admins (same as /get)
+    if not is_admin(user_id):
+        verify_status = await quota_repo.get_verify_status(user_id)
+        
+        # Check if verification expired
+        if verify_status.get("verified_time"):
+            from datetime import timedelta
+            verified_time = verify_status["verified_time"]
+            if verified_time.tzinfo is None:
+                verified_time = verified_time.replace(tzinfo=timezone.utc)
+            
+            time_diff = (datetime.now(timezone.utc) - verified_time).total_seconds()
+            if time_diff > settings.verify_expire_seconds:
+                # Expired - generate new token and shortlink
+                await quota_repo.update_verify_status(user_id, is_verified=False)
+                verify_status = await quota_repo.get_verify_status(user_id)
+        
+        # Generate verification message if not verified
+        if not verify_status.get("is_verified"):
+            # Generate random 10-character token
+            token = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
+            await quota_repo.update_verify_status(user_id, verify_token=token)
+            
+            # Create shortlink
+            bot_username = await bot.get_me()
+            shortlink = await get_shortlink(
+                settings.shortlink_url,
+                settings.shortlink_api,
+                f"https://t.me/{bot_username.username}?start=verify_{token}"
+            )
+            
+            # Create button
+            btn = [[InlineKeyboardButton(text="• 🔗 Open Link •", url=shortlink)]]
+            await message.answer(
+                f"<b>Your token has expired...</b> Please refresh your token to continue..\n\n"
+                f"<b>Token Timeout:</b> {get_exp_time(settings.verify_expire_seconds)}\n\n"
+                f"<b>What is the token?</b>\n\n"
+                f"This is an ads token. Passing one ad allows you to use the bot for {get_exp_time(settings.verify_expire_seconds)}",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=btn)
+            )
+            return
     if len(args) < 2:
         await message.answer("Usage: /claim <code>&lt;share_code&gt;</code>", parse_mode="HTML")
         return
@@ -373,20 +526,28 @@ async def cmd_claim(message: Message, bot: Bot) -> None:
         return
 
     try:
-        await bot.copy_message(
+        sent_message = await bot.copy_message(
             chat_id=message.chat.id,
             from_chat_id=record.channel_id,
             message_id=record.internal_message_id,
             caption=record.caption,
+            protect_content=True,  # Prevents forwarding and saving
         )
         await repo.increment_share_uses(record.id)
         await quota_repo.add_download_usage(user_id, file_size)
         await message.answer(
             f"✅ <b>File received!</b>\n"
-            f"📄 {record.effective_name} (shared by @{record.username or 'anonymous'})",
+            f"📄 {record.effective_name} (shared by @{record.username or 'anonymous'})\n\n"
+            f"⚠️ <b>This message will auto-delete in 60 seconds.</b>\n"
+            f"🔒 <b>Forwarding and saving are disabled.</b>",
             parse_mode="HTML",
         )
         logger.info("User %s claimed file %s via code %s", user_id, record.id, code)
+        
+        # Auto-delete the message after 60 seconds
+        asyncio.create_task(
+            _auto_delete_message(bot, message.chat.id, sent_message.message_id, record.id)
+        )
     except Exception as exc:
         logger.exception("Claim delivery failed: %s", exc)
         await message.answer(f"❌ Retrieval failed: <code>{type(exc).__name__}</code>", parse_mode="HTML")
@@ -605,84 +766,3 @@ async def cmd_mystats(message: Message) -> None:
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Token verification for non-admin downloads
-# ─────────────────────────────────────────────────────────────────────────────
-
-@router.message(Command("settoken"))
-async def cmd_settoken(message: Message, state: FSMContext) -> None:
-    """Set your download verification token."""
-    if is_admin(message.from_user.id):
-        await message.answer("ℹ️ Admins don't need a token — you can download freely.")
-        return
-
-    await state.set_state(TokenStates.waiting_for_new_token)
-    await message.answer(
-        "🔐 <b>Set Download Token</b>\n\n"
-        "Send me a token (password) that you'll need to enter before downloading files.\n\n"
-        "⚠️ Choose something memorable — you'll need this every time you download.",
-        parse_mode="HTML",
-    )
-
-
-@router.message(TokenStates.waiting_for_new_token)
-async def process_new_token(message: Message, state: FSMContext) -> None:
-    token = message.text.strip()
-    if len(token) < 4:
-        await message.answer("❌ Token must be at least 4 characters. Try again:")
-        return
-
-    quota_repo = QuotaRepository(get_db())
-    await quota_repo.set_download_token(message.from_user.id, token)
-    await state.clear()
-    await message.answer(
-        "✅ <b>Token set successfully!</b>\n\n"
-        f"Your download token is: <code>{token}</code>\n\n"
-        "Use /verify before downloading files.",
-        parse_mode="HTML",
-    )
-
-
-@router.message(Command("verify"))
-async def cmd_verify(message: Message, state: FSMContext) -> None:
-    """Verify your token to enable downloads."""
-    if is_admin(message.from_user.id):
-        await message.answer("ℹ️ Admins don't need token verification — you can download freely.")
-        return
-
-    quota_repo = QuotaRepository(get_db())
-    stored_token = await quota_repo.get_download_token(message.from_user.id)
-
-    if not stored_token:
-        await message.answer(
-            "❌ You haven't set a token yet.\n\nUse /settoken to set one first.",
-            parse_mode="HTML",
-        )
-        return
-
-    await state.set_state(TokenStates.waiting_for_token)
-    await state.update_data(stored_token=stored_token)
-    await message.answer("🔐 Send your download token to verify:", parse_mode="HTML")
-
-
-@router.message(TokenStates.waiting_for_token)
-async def process_token_verify(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    stored_token = data.get("stored_token")
-    user_token = message.text.strip()
-
-    await state.clear()
-
-    if user_token == stored_token:
-        from datetime import timedelta
-        quota_repo = QuotaRepository(get_db())
-        verified_until = datetime.now(timezone.utc) + timedelta(minutes=30)
-        await quota_repo.set_token_verified(message.from_user.id, verified_until)
-        await message.answer(
-            "✅ <b>Token verified!</b>\n\n"
-            "You can now download files for 30 minutes.\n"
-            "Use /get, /list, or tap files to download.",
-            parse_mode="HTML",
-        )
-    else:
-        await message.answer("❌ Incorrect token. Try /verify again.")

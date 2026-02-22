@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     default_bandwidth_limit_mb: int = 500  # Daily bandwidth limit per user in MB
     default_download_limit: int = 0   # Daily download count limit (0 = unlimited)
 
+    # ── Token Verification ───────────────────────────────────────────────────────
+    shortlink_url: str = ""           # URL shortener service (e.g., "linkshortify.com")
+    shortlink_api: str = ""           # API key for URL shortener service
+    verify_expire_seconds: int = 1200  # Token verification expiry time in seconds (default: 20 min)
+
     # ── Auto-Expiry ───────────────────────────────────────────────────────────
     default_expiry_days: int = 0      # 0 = never expires
     expiry_cleanup_interval: int = 3600  # Run cleanup every N seconds (1 hour)

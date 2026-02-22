@@ -149,7 +149,7 @@ class QuotaRepository:
         )
 
     async def is_token_verified(self, user_id: int) -> bool:
-        """Check if user's token is currently verified."""
+        """Check if user's token is currently verified (old method - deprecated)."""
         doc = await self.col.find_one({"user_id": user_id})
         if not doc:
             return False
@@ -160,6 +160,78 @@ class QuotaRepository:
         if verified_until.tzinfo is None:
             verified_until = verified_until.replace(tzinfo=timezone.utc)
         return verified_until > datetime.now(timezone.utc)
+
+    # ── Shortlink Token Verification Methods ───────────────────────────────────
+
+    async def get_verify_status(self, user_id: int) -> dict:
+        """Get user's verification status.
+        
+        Returns dict with:
+        - is_verified: bool
+        - verify_token: str
+        - verified_time: datetime or None
+        - verify_count: int
+        """
+        doc = await self.col.find_one({"user_id": user_id})
+        if not doc:
+            return {
+                "is_verified": False,
+                "verify_token": None,
+                "verified_time": None,
+                "verify_count": 0,
+            }
+        return {
+            "is_verified": doc.get("is_verified", False),
+            "verify_token": doc.get("verify_token"),
+            "verified_time": doc.get("verified_time"),
+            "verify_count": doc.get("verify_count", 0),
+        }
+
+    async def update_verify_status(
+        self, user_id: int, is_verified: bool = None, verify_token: str = None
+    ) -> None:
+        """Update user's verification status."""
+        update_data = {"updated_at": datetime.now(timezone.utc)}
+        if is_verified is not None:
+            update_data["is_verified"] = is_verified
+            if is_verified:
+                update_data["verified_time"] = datetime.now(timezone.utc)
+        if verify_token is not None:
+            update_data["verify_token"] = verify_token
+
+        await self.col.update_one(
+            {"user_id": user_id},
+            {"$set": update_data},
+            upsert=True,
+        )
+
+    async def get_verify_count(self, user_id: int) -> int:
+        """Get user's verification count."""
+        doc = await self.col.find_one({"user_id": user_id})
+        return doc.get("verify_count", 0) if doc else 0
+
+    async def set_verify_count(self, user_id: int, count: int) -> None:
+        """Set user's verification count."""
+        await self.col.update_one(
+            {"user_id": user_id},
+            {"$set": {"verify_count": count, "updated_at": datetime.now(timezone.utc)}},
+            upsert=True,
+        )
+
+    async def get_total_verify_count(self) -> int:
+        """Get total verification count across all users (for admin stats)."""
+        pipeline = [
+            {"$group": {"_id": None, "total": {"$sum": "$verify_count"}}}
+        ]
+        result = await self.col.aggregate(pipeline).to_list(1)
+        return result[0]["total"] if result else 0
+
+    async def reset_all_verify_counts(self) -> None:
+        """Reset verify_count to 0 for all users."""
+        await self.col.update_many(
+            {},
+            {"$set": {"verify_count": 0, "updated_at": datetime.now(timezone.utc)}},
+        )
 
     async def reset_daily_quota(self, user_id: int) -> None:
         """Reset daily quota counters (bandwidth_used, download_count)."""

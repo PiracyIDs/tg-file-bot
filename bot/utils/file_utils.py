@@ -2,6 +2,7 @@
 Utility helpers: file type detection, name extraction, size formatting.
 """
 from aiogram.types import Message
+from shortzy import Shortzy
 
 
 def detect_file_type(message: Message) -> str:
@@ -98,3 +99,42 @@ def parse_tags(text: str) -> list[str]:
     """
     tokens = text.strip().split()
     return [t.lower().lstrip("#") for t in tokens if t]
+
+
+
+async def get_shortlink(url: str, api: str, link: str) -> str:
+    """
+    Generate a shortlink using the Shortzy library.
+    
+    Args:
+        url: URL shortener service (e.g., "linkshortify.com")
+        api: API key for the URL shortener service
+        link: Original link to shorten (e.g., bot's /start?start=verify_{token} link)
+    
+    Returns:
+        The shortened URL
+    """
+    if not url or not api:
+        return link  # Return original link if shortlink config is missing
+    
+    shortzy = Shortzy(api_key=api, base_site=url)
+    return await shortzy.convert(link)
+
+
+def get_exp_time(seconds: int) -> str:
+    """
+    Convert seconds to human-readable time format.
+    
+    Args:
+        seconds: Time in seconds
+    
+    Returns:
+        Human-readable time string (e.g., "20 minutes")
+    """
+    periods = [('days', 86400), ('hours', 3600), ('mins', 60), ('secs', 1)]
+    result = ''
+    for period_name, period_seconds in periods:
+        if seconds >= period_seconds:
+            period_value, seconds = divmod(seconds, period_seconds)
+            result += f'{int(period_value)} {period_name} '
+    return result.strip()

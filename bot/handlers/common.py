@@ -1,11 +1,19 @@
 """
 Common handlers: /start, /help, catch-all.
 """
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
+from bot.config import settings
+from bot.database.connection import get_db
+from bot.database.repositories.quota_repo import QuotaRepository
+from bot.utils.file_utils import get_exp_time
 
 router = Router(name="common")
+
+# Helper functions
+def is_admin(user_id: int) -> bool:
+    return user_id in settings.admin_user_ids
 
 HELP_TEXT = (
     "👋 <b>File Storage Bot</b> — Enhanced Edition\n\n"
@@ -25,11 +33,6 @@ HELP_TEXT = (
     "<b>🔗 Sharing</b>\n"
     "/share <code>&lt;file_id&gt;</code> — Generate a share code\n"
     "/claim <code>&lt;code&gt;</code> — Claim a file shared by someone\n\n"
-
-    "<b>🔐 Token Verification</b>\n"
-    "/settoken — Set your download verification token\n"
-    "/verify — Verify token to enable downloads (30-min session)\n\n"
-
     "<b>📊 Account</b>\n"
     "/mystats — View your download quota usage\n"
     "/delete <code>&lt;file_id&gt;</code> — Delete a file\n\n"
@@ -44,7 +47,47 @@ HELP_TEXT = (
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message) -> None:
+async def cmd_start(message: Message, bot: Bot) -> None:
+    """
+    /start command handler with token verification support.
+    - /start alone: Show help text
+    - /start verify_{token}: Verify token via shortlink
+    """
+    user_id = message.from_user.id
+    
+    # Check if this is a token verification request
+    if message.text and len(message.text) > 7:
+        text = message.text.strip()
+        
+        # Check for verify_{token} pattern (e.g., /start verify_ABC1234567)
+        if "verify_" in text:
+            _, token = text.split("_", 1)
+            
+            quota_repo = QuotaRepository(get_db())
+            verify_status = await quota_repo.get_verify_status(user_id)
+            
+            # Verify the token
+            if verify_status.get("verify_token") != token:
+                await message.answer(
+                    "⚠️ <b>Invalid token</b>.\n\nPlease use /start again to get a new verification token.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Token is valid, mark as verified
+            await quota_repo.update_verify_status(user_id, is_verified=True)
+            current_count = await quota_repo.get_verify_count(user_id)
+            await quota_repo.set_verify_count(user_id, current_count + 1)
+            
+            await message.answer(
+                f"✅ <b>Token verified!</b>\n\n"
+                f"You can now download files for <b>{get_exp_time(settings.verify_expire_seconds)}</b>.\n\n"
+                f"Use /get, /list, or tap files to download.",
+                parse_mode="HTML"
+            )
+            return
+    
+    # Regular /start - show help
     await message.answer(HELP_TEXT, parse_mode="HTML")
 
 

@@ -7,7 +7,7 @@ A feature-rich Telegram bot for storing and managing files in a private channel 
 - **Admin-only uploads** — Only designated admins can upload files
 - **Download quota system** — Per-user daily bandwidth and download count limits (resets at midnight UTC)
 - **Unlimited downloads for admins** — Admins bypass quota restrictions
-- **Token verification for downloads** — Non-admins must verify a token before downloading (30-min session)
+- **Shortlink token verification for downloads** — Non-admins must pass an ad (via shortlink) before downloading (configurable session duration)
 - **Duplicate detection** — Automatically detects if you've already uploaded a file
 - **File organization** — Tags, rename, search by filename or tag
 - **File sharing** — Generate share codes for others to claim files
@@ -20,13 +20,14 @@ A feature-rich Telegram bot for storing and managing files in a private channel 
 - MongoDB 7.0+
 - Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
 - A private Telegram channel for file storage
+- Shortlink service (e.g., bit.ly, ouo.io, shorte.st) for ad-based verification
 
 ## Setup
 
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/yourusername/tg-bot-v2.git
+git clone https://github.com/yourusername/tg-file-bot.git
 cd tg-bot-v2
 python -m venv .venv
 source .venv/bin/activate  # Linux/macOS
@@ -68,6 +69,11 @@ DEFAULT_QUOTA_MB=500        # Legacy - kept for backward compatibility
 DEFAULT_BANDWIDTH_LIMIT_MB=500  # Daily bandwidth limit per user in MB (0 = unlimited)
 DEFAULT_DOWNLOAD_LIMIT=0    # Daily download count limit (0 = unlimited)
 
+# Token Verification (Shortlink-based ad verification)
+VERIFY_EXPIRE_SECONDS=1200  # Token validity in seconds (default: 20 minutes)
+SHORTLINK_URL=https://your-shortlink-service.com
+SHORTLINK_API_KEY=your_api_key_here
+
 # Auto-Expiry
 DEFAULT_EXPIRY_DAYS=0       # 0 = no auto-expiry
 EXPIRY_CLEANUP_INTERVAL=3600
@@ -93,6 +99,15 @@ This starts both the bot and MongoDB container.
 
 ## Usage
 
+### Token Verification System
+
+Non-admin users must complete a shortlink ad verification before downloading files:
+
+1. When a user tries to download a file (`/get`, inline button, or `/claim`), they receive a verification prompt
+2. The bot sends a shortlink that users must open and view (completing an ad)
+3. After passing the ad, users can download files for the configured duration (default: 20 minutes)
+4. Admins bypass this verification entirely
+
 ### User Commands
 
 | Command | Description |
@@ -106,10 +121,8 @@ This starts both the bot and MongoDB container.
 | `/rename <id>` | Rename a file |
 | `/delete <id>` | Delete a file |
 | `/share <id>` | Generate a share code |
-| `/claim <code>` | Claim a shared file |
+| `/claim <code>` | Claim a shared file (requires verification) |
 | `/mystats` | View your download quota usage |
-| `/settoken` | Set your download verification token |
-| `/verify` | Verify token to enable downloads (30-min session) |
 
 ### Admin Commands
 
@@ -139,7 +152,7 @@ bot/
 │   ├── connection.py    # MongoDB connection
 │   └── repositories/
 │       ├── file_repo.py # File CRUD operations
-│       └── quota_repo.py # Quota tracking
+│       └── quota_repo.py # Quota tracking & verification
 ├── handlers/
 │   ├── upload.py        # File upload (admin-only)
 │   ├── download.py      # File retrieval & management
