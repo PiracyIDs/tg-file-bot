@@ -1,5 +1,0 @@
-=== QA Scenario 1: Configuration loads correctly ===
-default_quota_mb: 500
-default_bandwidth_limit_mb: 500
-default_download_limit: 0
-All assertions passed!
