@@ -1,0 +1,47 @@
+QA SCENARIO 2: Property Calculations Work Correctly
+====================================================
+
+Date: 2026-02-20
+Status: PASSED
+
+Test Steps:
+1. Create instance with bandwidth_used=750MB, bandwidth_limit=1GB
+2. Assert bandwidth_remaining property returns correct value
+3. Create instance with download_count=32, download_limit=50
+4. Assert downloads_remaining property returns 18
+
+Results:
+--------
+
+✅ bandwidth_remaining calculation:
+   - Input: bandwidth_used=750MB, bandwidth_limit=1GB
+   - Expected: 287309824 bytes (~274 MB)
+   - Actual: 287309824 bytes (~274 MB)
+   - Status: PASSED
+
+✅ downloads_remaining calculation:
+   - Input: download_count=32, download_limit=50
+   - Expected: 18
+   - Actual: 18
+   - Status: PASSED
+
+✅ is_unlimited property:
+   - bandwidth_limit=0 → is_unlimited=True ✓
+   - bandwidth_limit=1000 → is_unlimited=False ✓
+
+✅ Unlimited bandwidth handling:
+   - bandwidth_limit=0 → bandwidth_remaining=inf ✓
+   - download_limit=0 → downloads_remaining=inf ✓
+
+✅ quota_reset_time field:
+   - Field accepts datetime values
+   - Correctly serialized in to_mongo()
+
+Property Definitions:
+---------------------
+- is_unlimited: Returns True if bandwidth_limit == 0
+- bandwidth_remaining: Returns inf if unlimited, else max(0, limit - used)
+- downloads_remaining: Returns inf if download_limit == 0, else max(0, limit - count)
+
+CONCLUSION: All property calculations work correctly for both
+            limited and unlimited quota scenarios.

@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_file_size_mb: int = 50
 
+    # ── Auto-Delete Timer ─────────────────────────────────────────────────────
+    auto_delete_seconds: int = 60   # Auto-delete downloaded files after N seconds
+
     @field_validator("allowed_user_ids", "admin_user_ids", mode="before")
     @classmethod
     def parse_id_list(cls, v):

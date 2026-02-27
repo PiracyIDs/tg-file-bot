@@ -1,0 +1,46 @@
+============================================================
+F3: Real Manual QA
+============================================================
+
+1. Model Serialization Test
+   ✓ PASS - All download tracking fields serialized correctly
+   - bandwidth_used present
+   - bandwidth_limit present
+   - download_count present
+   - download_limit present
+   - quota_reset_time present
+
+2. Property Calculations Test
+   ✓ PASS - All property calculations correct
+   - bandwidth_remaining: 274.00 MB (expected 274.00 MB)
+   - downloads_remaining: 18 (expected 18)
+   - is_unlimited: False (correct)
+
+3. Unlimited Quota Test
+   ✓ PASS - Unlimited quota works correctly
+   - is_unlimited returns True when bandwidth_limit=0
+   - bandwidth_remaining returns inf
+   - downloads_remaining returns inf
+
+4. No Storage Quota Fields Test
+   ✓ PASS - No storage quota fields present
+   - used_bytes not in mongo_doc
+   - quota_bytes not in mongo_doc
+   - file_count not in mongo_doc
+
+5. Configuration Test
+   ✓ PASS - All configuration fields exist
+   - default_bandwidth_limit_mb: 500
+   - default_download_limit: 0
+   - default_quota_mb: 500 (backward compat)
+
+6. Quota Logic Test
+   ✓ PASS - All required methods exist
+   - can_download() method
+   - add_download_usage() method
+   - remove_download_usage() method
+   - reset_daily_quota() method
+   - check_and_reset_if_needed() method
+
+=== SUMMARY ===
+Scenarios [6/6 pass] | Integration [N/A - no live DB] | Edge Cases [3 tested] | VERDICT: APPROVE

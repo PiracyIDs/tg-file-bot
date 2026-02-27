@@ -52,7 +52,8 @@ async def cmd_admin(message: Message) -> None:
         f"\n\n<b>Admin commands:</b>\n"
         f"/setquota <code>&lt;user_id&gt; &lt;bandwidth_mb&gt; [dl_limit]</code> — set download quota\n"
         f"/delfile <code>&lt;record_id&gt;</code> — force-delete any file\n"
-        f"/userinfo <code>&lt;user_id&gt;</code> — view user stats",
+        f"/userinfo <code>&lt;user_id&gt;</code> — view user stats\n"
+        f"/autodelete <code>&lt;seconds&gt;</code> — set/view auto-delete timer",
         parse_mode="HTML",
     )
 
@@ -165,3 +166,73 @@ async def cmd_userinfo(message: Message) -> None:
         lines.append(f"  • <code>{r.id}</code> — {r.effective_name} ({format_size(r.file_size)})")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.message(Command("autodelete"))
+async def cmd_autodelete(message: Message) -> None:
+    """Admin: /autodelete [seconds] — set or view auto-delete timer for downloaded files."""
+    if not is_admin(message.from_user.id):
+        return
+
+    parts = message.text.split(maxsplit=1)
+    
+    if len(parts) == 1:
+        # Just show current value
+        current = settings.auto_delete_seconds
+        await message.answer(
+            f"⏱️ <b>Auto-Delete Timer</b>\n\n"
+            f"Current: <b>{current} seconds</b>\n\n"
+            f"Usage: /autodelete <code>&lt;seconds&gt;</code>\n"
+            f"Example: /autodelete <code>120</code> — auto-delete after 2 minutes\n"
+            f"Use <code>0</code> to disable auto-delete",
+            parse_mode="HTML",
+        )
+        return
+    
+    # Try to set new value
+    try:
+        seconds = int(parts[1].strip())
+    except ValueError:
+        await message.answer("❌ Seconds must be an integer.", parse_mode="HTML")
+        return
+    
+    if seconds < 0:
+        await message.answer("❌ Seconds must be 0 or greater.", parse_mode="HTML")
+        return
+    
+    # Update .env file
+    import os
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
+    
+    try:
+        # Read current .env content
+        with open(env_path, "r") as f:
+            lines = f.readlines()
+        
+        # Find and update or append the setting
+        found = False
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith("AUTO_DELETE_SECONDS"):
+                new_lines.append(f"AUTO_DELETE_SECONDS={seconds}\n")
+                found = True
+            else:
+                new_lines.append(line)
+        
+        if not found:
+            new_lines.append(f"AUTO_DELETE_SECONDS={seconds}\n")
+        
+        with open(env_path, "w") as f:
+            f.writelines(new_lines)
+        
+        label = "disabled" if seconds == 0 else f"{seconds} seconds"
+        await message.answer(
+            f"✅ Auto-delete timer set to <b>{label}</b>\n\n"
+            f"Note: Restart the bot for changes to take effect.",
+            parse_mode="HTML",
+        )
+        logger.info("Admin %s set auto_delete_seconds to %s", message.from_user.id, seconds)
+        
+    except Exception as exc:
+        logger.exception("Failed to update auto_delete_seconds: %s", exc)
+        await message.answer(f"❌ Failed to update setting: {exc}", parse_mode="HTML")

@@ -1,0 +1,39 @@
+QA SCENARIO 1: Quota Reset Mechanism Verification
+==================================================
+
+Test 1: Reset when reset time has passed
+  Before reset:
+    bandwidth_used: 900 MB
+    download_count: 45
+    quota_reset_time: 2026-02-20 12:17:28.885035+00:00 (past)
+  After check_and_reset_if_needed:
+    bandwidth_used: 0
+    download_count: 0
+    quota_reset_time: 2026-02-21 00:00:00+00:00 (future)
+  ✓ PASSED
+
+Test 2: No reset when reset time is in future
+  Before check:
+    bandwidth_used: 500 MB
+    download_count: 20
+    quota_reset_time: 2026-02-21 13:17:28.885154+00:00 (future)
+  After check_and_reset_if_needed:
+    bandwidth_used: 500 MB (unchanged)
+    download_count: 20 (unchanged)
+  ✓ PASSED
+
+Test 3: Direct reset_daily_quota call
+  Before reset:
+    bandwidth_used: 1024 MB
+    download_count: 100
+  After reset_daily_quota:
+    bandwidth_used: 0
+    download_count: 0
+    quota_reset_time: future datetime at midnight UTC
+  ✓ PASSED
+
+RESULT: All tests passed ✓
+
+Implementation Details:
+- reset_daily_quota(): Sets bandwidth_used=0, download_count=0, quota_reset_time=next midnight UTC
+- check_and_reset_if_needed(): Checks if current time >= quota_reset_time, triggers reset if needed

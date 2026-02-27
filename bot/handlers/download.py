@@ -105,11 +105,14 @@ async def _deliver_file(
         )
         # Track download usage (for both admins and regular users)
         await quota_repo.add_download_usage(requesting_user_id, file_size)
-        
-        # Auto-delete the message after 60 seconds
-        asyncio.create_task(
-            _auto_delete_message(bot, chat_id, sent_message.message_id, record_id)
-        )
+
+        # Send auto-delete warning if enabled
+        if settings.auto_delete_seconds > 0:
+            warning_text = f"⚠️ <b>This message will auto-delete in {settings.auto_delete_seconds} seconds.</b>\n🔒 <b>Forwarding and saving are disabled.</b>"
+            await bot.send_message(chat_id, warning_text, parse_mode="HTML")
+            asyncio.create_task(
+                _auto_delete_message(bot, chat_id, sent_message.message_id, record_id, settings.auto_delete_seconds)
+            )
     except Exception as exc:
         logger.exception("Delivery failed for record %s: %s", record_id, exc)
         return f"❌ Retrieval failed: <code>{type(exc).__name__}</code>"
@@ -122,7 +125,7 @@ async def _auto_delete_message(
     chat_id: int,
     message_id: int,
     record_id: str,
-    delay_seconds: int = 60,
+    delay_seconds: int = 0,
 ) -> None:
     """
     Automatically delete a retrieved file message after a delay.
@@ -538,16 +541,17 @@ async def cmd_claim(message: Message, bot: Bot) -> None:
         await message.answer(
             f"✅ <b>File received!</b>\n"
             f"📄 {record.effective_name} (shared by @{record.username or 'anonymous'})\n\n"
-            f"⚠️ <b>This message will auto-delete in 60 seconds.</b>\n"
+            f"⚠️ <b>This message will auto-delete in {settings.auto_delete_seconds} seconds.</b>\n" if settings.auto_delete_seconds > 0 else ""
             f"🔒 <b>Forwarding and saving are disabled.</b>",
             parse_mode="HTML",
         )
         logger.info("User %s claimed file %s via code %s", user_id, record.id, code)
         
-        # Auto-delete the message after 60 seconds
-        asyncio.create_task(
-            _auto_delete_message(bot, message.chat.id, sent_message.message_id, record.id)
-        )
+        # Auto-delete the message after configured seconds
+        if settings.auto_delete_seconds > 0:
+            asyncio.create_task(
+                _auto_delete_message(bot, message.chat.id, sent_message.message_id, record.id, settings.auto_delete_seconds)
+            )
     except Exception as exc:
         logger.exception("Claim delivery failed: %s", exc)
         await message.answer(f"❌ Retrieval failed: <code>{type(exc).__name__}</code>", parse_mode="HTML")

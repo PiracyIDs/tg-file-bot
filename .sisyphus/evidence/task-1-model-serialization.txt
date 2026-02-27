@@ -1,0 +1,43 @@
+QA SCENARIO 1: Model Serialization Preserves New Fields
+========================================================
+
+Date: 2026-02-20
+Status: PASSED
+
+Test Steps:
+1. Import UserQuotaRecord from bot.models.file_record
+2. Create instance with new download tracking fields
+3. Call to_mongo() method
+4. Assert all new fields are present in output
+
+Results:
+--------
+✅ Fields correctly serialized:
+   - user_id: present
+   - bandwidth_used: present
+   - bandwidth_limit: present
+   - download_count: present
+   - download_limit: present
+   - updated_at: present
+
+✅ Old storage fields removed:
+   - used_bytes: NOT in output (correctly removed)
+   - quota_bytes: NOT in output (correctly removed)
+   - file_count: NOT in output (correctly removed)
+
+✅ Token fields preserved:
+   - download_token: present and working
+   - token_verified_until: present and working
+
+Sample to_mongo() output:
+{
+    'user_id': 12345,
+    'bandwidth_used': 786432000,
+    'bandwidth_limit': 1073741824,
+    'download_count': 32,
+    'download_limit': 50,
+    'updated_at': datetime(...)
+}
+
+CONCLUSION: Model correctly serializes all new download tracking fields
+            and properly excludes removed storage quota fields.
