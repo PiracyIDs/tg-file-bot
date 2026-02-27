@@ -306,29 +306,6 @@ bot/
 
 ---
 
-## Production Hardening
-
-This bot includes production-ready features:
-
-### ✅ Implemented
-- **Comprehensive test coverage** — 103 test cases across critical components
-- **Redis FSM storage** — Persistent state with MemoryStorage fallback
-- **Sentry monitoring** — Error tracking and performance traces
-- **Graceful shutdown** — Proper signal handling and resource cleanup
-- **Health checks** — Docker health checks for all services
-- **Structured logging** — Better observability and debugging
-- **Pinned dependencies** — All versions locked for reproducibility
-
-### 📊 Key Metrics
-- **Test coverage**: 103 test cases
-- **Uptime**: Graceful shutdown ensures clean state
-- **Monitoring**: Sentry integration for error tracking
-- **Scalability**: Redis FSM supports multiple bot instances
-
-For detailed hardening documentation, see `PRODUCTION_HARDENING.md`.
-
----
-
 ## Troubleshooting
 
 ### Redis Connection Issues
