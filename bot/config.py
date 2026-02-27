@@ -28,6 +28,8 @@ class Settings(BaseSettings):
         env_file=str(_ENV_FILE),
         env_file_encoding="utf-8",
         case_sensitive=False,
+        env_parse_none_str="",
+        env_nested_delimiter="__",
     )
 
     # ── Telegram ──────────────────────────────────────────────────────────────
@@ -39,8 +41,8 @@ class Settings(BaseSettings):
     mongo_db_name: str = "tg_file_storage"
 
     # ── Security / Access ─────────────────────────────────────────────────────
-    allowed_user_ids: list[int] = []  # Empty = open access
-    admin_user_ids: list[int] = []    # Users with /admin access
+    allowed_user_ids: list[int] = []  # Empty = open access (comma-separated from .env)
+    admin_user_ids: list[int] = []    # Users with /admin access (comma-separated from .env)
 
     # ── Quota ─────────────────────────────────────────────────────────────────
     default_quota_mb: int = 500       # Per-user default quota in MB (0 = unlimited)
@@ -63,13 +65,37 @@ class Settings(BaseSettings):
     # ── Auto-Delete Timer ─────────────────────────────────────────────────────
     auto_delete_seconds: int = 60   # Auto-delete downloaded files after N seconds
 
+    # ── Redis ───────────────────────────────────────────────────────────────────
+    redis_uri: str = "redis://localhost:6379/0"
+    redis_password: str = ""  # Empty = no password
+
+    # ── Monitoring & Error Tracking ───────────────────────────────────────────────
+    sentry_dsn: str = ""           # Sentry DSN for error tracking
+    sentry_environment: str = "production"
+    sentry_traces_sample_rate: float = 0.1
     @field_validator("allowed_user_ids", "admin_user_ids", mode="before")
     @classmethod
     def parse_id_list(cls, v):
         """Allow comma-separated string from .env: '111,222,333'"""
+        if v is None:
+            return []
+        if isinstance(v, int):
+            return [v]
         if isinstance(v, str):
-            return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
-        return v or []
+            # Try JSON parsing first for arrays like '[111,222,333]'
+            if v.strip().startswith('[') and v.strip().endswith(']'):
+                try:
+                    import json
+                    return json.loads(v)
+                except:
+                    pass
+            # Fall back to comma-separated
+            if v.strip():
+                return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
+            return []
+        if isinstance(v, list):
+            return v
+        return []
 
 
 @lru_cache(maxsize=1)

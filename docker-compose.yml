@@ -9,11 +9,20 @@ services:
     environment:
       # Redundant with Dockerfile ENV but makes it explicit for overrides
       PYTHONPATH: /app
+      REDIS_URI: redis://redis:6379/0
     depends_on:
       mongo:
         condition: service_healthy
+      redis:
+        condition: service_started
     networks:
       - bot_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   mongo:
     image: mongo:7.0
@@ -33,6 +42,22 @@ services:
       retries: 5
       start_period: 20s
 
+  redis:
+    image: redis:7-alpine
+    container_name: tg_file_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-}"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
 networks:
   bot_net:
     driver: bridge
@@ -40,3 +65,4 @@ networks:
 volumes:
   mongo_data:
   mongo_config:
+  redis_data:
